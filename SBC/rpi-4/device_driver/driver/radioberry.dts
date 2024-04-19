@@ -26,10 +26,15 @@
         fragment@0 {
                 target-path = "/";
                 __overlay__ {
-                                radio {
+                         rblabel: radio {
                                         compatible = "sdr,radioberry";
                                         rx-sample-gpio = <&gpio 25 0>;
+                                        status = "okay";
                                 };
                         };
         };
+               __overrides__ {
+                        enable-irq = <&rblabel>, "enable-irq:4";
+			};
+
 };

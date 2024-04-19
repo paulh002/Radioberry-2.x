@@ -73,8 +73,7 @@ static int initialize_rpi() {
 	rpi_read_io= rpi_io + (GPIO_LEV0_OFFSET / sizeof(uint32_t));
 
 	
-	printk(KERN_INFO "GPIO ready for use\n");
-	
+	printk(KERN_INFO "Radioberry: GPIO ready for use\n");
 	return ret;
 	
 }

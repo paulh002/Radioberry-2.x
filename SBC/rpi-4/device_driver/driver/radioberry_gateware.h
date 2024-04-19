@@ -40,7 +40,7 @@ static void upload_gateware_byte( int one_byte ) {
 }
 
 static int prepare_gateware_loading() {
-	printk(KERN_INFO "Info: prepare FPGA for loading image\n");
+	printk(KERN_INFO "Radioberry: Info: prepare FPGA for loading image\n");
 	
 	*rpi_set_io_low = (1<<oPinNCONFIG);
 	*rpi_set_io_low = (1<<oPinDATA);
@@ -71,7 +71,7 @@ static void initialize_gateware() {
 	initialize_gpio_for_output(rpi_io, oPinDATA);
 	initialize_gpio_for_output(rpi_io, oPinDCLK);
 	
-	printk(KERN_INFO "GPIO ready for uploading gateware...\n");
+	printk(KERN_INFO "Radioberry: GPIO ready for uploading gateware...\n");
 	
 }
 
@@ -92,7 +92,7 @@ static int activate_gateware() {
 	*rpi_set_io_high = (1<<oPinDCLK);
 	*rpi_set_io_low = (1<<oPinDCLK);
 
-	printk(KERN_INFO "Info: gateware upload and activation succeeded\n");
+	printk(KERN_INFO "Radioberry: gateware upload and activation succeeded\n");
 	
 	return 0;
 }

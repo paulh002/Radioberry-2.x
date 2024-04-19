@@ -83,8 +83,10 @@ cp this radioberry.dtbo into /boot/overlays
 add the following line in config.txt:
 
 dtoverlay=radioberry
+#dtparam=enable-irq=1
 
 This loads the kernel module during boot.
+Enable the param for IRQ mode driver, this will reduce the CPU usage but can drop samples when the CPU has high load du to other programs running on the pi. 
 
 
 Alternative step:

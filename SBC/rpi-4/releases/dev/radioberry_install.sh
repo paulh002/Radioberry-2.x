@@ -5,6 +5,22 @@ echo ""
 echo "============================================"
 echo "Radioberry software installation."
 echo ""
+OS=`uname -m`
+bits=`getconf LONG_BIT`
+if [ $OS = "aarch64" ]; then
+        echo "	64 bit kernel"
+fi
+if [ $bits = "64" ]; then
+        echo "	64 bit OS"
+fi
+if [ $bits = "32" ]; then
+        echo "	32 bit OS"
+fi
+if [ $bits = "32" ] && [ $OS = "aarch64" ]; then
+        echo "	64 kernel and 32 bit OS not supported"
+		echo "============================================"
+        exit
+fi
 echo "You will install the following versions: "
 echo ""
 echo "	Gateware version 73.3"
@@ -30,7 +46,9 @@ function install_dependency {
 }
 
 install_dependency raspberrypi-kernel-headers
-install_dependency linux-headers-rpi
+if [ $bits = "32" ]; then
+	install_dependency linux-headers-rpi
+fi
 install_dependency git
 install_dependency device-tree-compiler
 install_dependency pigpio
@@ -103,10 +121,10 @@ if [ $? -eq 0 ]; then
 	sudo depmod	
 	#register radioberry driver
 	sudo modprobe radioberry
-	sudo chmod 666 /dev/radioberry
 	#show radioberry driver info.
+	sleep 10
 	sudo modinfo radioberry
-
+	sudo chmod 666 /dev/radioberry
 	echo ""
 	echo "Radioberry driver installed."
 else
@@ -171,7 +189,9 @@ fi
 
 sudo systemctl enable radioberry
 sudo systemctl start radioberry
-
+echo ""
+echo ""
+dmesg | grep -e radioberry -e GPIO
 
 echo ""
 echo ""
@@ -184,4 +204,6 @@ echo "============================================"
 echo ""
 echo ""
 
+sleep 5
+sudo reboot
 exit 0

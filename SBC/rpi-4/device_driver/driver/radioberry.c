@@ -72,7 +72,16 @@ static DEFINE_MUTEX(radioberry_mutex);
 static int _nrx = 1;
 static int majorNumber;                  	
 static struct class*  radioberryCharClass  = NULL; 
-static struct device* radioberryCharDevice = NULL; 
+static struct device* radioberryCharDevice = NULL;
+static bool radioberry_enable_irq = false; 
+static unsigned int irqNumber; 
+static struct gpio_desc *gpio_desc = NULL;
+static wait_queue_head_t rx_sample_queue;
+
+static irq_handler_t radioberry_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs){
+	wake_up_interruptible(&rx_sample_queue);
+    return (irq_handler_t) IRQ_HANDLED;      
+}
 
 static void firmware_load(const char *firmware, int size) {
 	printk(KERN_INFO "inside %s function \n", __FUNCTION__);
@@ -114,8 +123,14 @@ ssize_t radioberry_read(struct file *flip, char *buf, size_t count, loff_t *pos)
 	uint32_t value = 0;
 	
 	int s = 0, i = 0;
-	while ((((*rpi_read_io) >> 25) & 1) == 0)
-		udelay(100);	
+	if (radioberry_enable_irq) {
+		wait_event_interruptible(rx_sample_queue, (((*rpi_read_io) >> 25) & 1) != 0);
+	}
+	else {
+		while ((((*rpi_read_io) >> 25) & 1) == 0)
+			udelay(100);	
+	}
+	
 	for (s = 0; s < nr_samples; s++) {	
 		value = 0;
 		*rpi_set_io_high = (1<<RPI_RX_CLK);
@@ -286,18 +301,35 @@ static struct file_operations radioberry_fops = {
 
 static int radioberry_probe(struct platform_device *pdev)
 {
-	int result;
+	int result, value;
 	
-	printk(KERN_INFO "inside %s function \n", __FUNCTION__);	
+	printk(KERN_INFO "Radioberry: inside %s function \n", __FUNCTION__);	
 	if(!device_property_present(&pdev->dev, "rx-sample-gpio")) 
 	{
-		printk("radioberry - Error! Device overlay property 'rx-sample-gpio' not found!\n");
+		printk("Radioberry: - Error! Device overlay property 'rx-sample-gpio' not found!\n");
 		return -1;
 	}
 	else
-		printk("radioberry - Device property 'rx-sample-gpio' found!\n");
-			
-	
+		printk("Radioberry: - Device property 'rx-sample-gpio' found!\n");
+
+	if (!of_property_read_u32(pdev->dev.of_node, "enable-irq", &value)) 
+        {
+			printk("Radioberry: - Device property 'enable-irq' found!\n");
+			if (value) {
+				radioberry_enable_irq = true; 
+				printk(KERN_INFO "Radioberry: IRQ Enabled\n");
+			}
+			else {
+				radioberry_enable_irq = false; 
+				printk(KERN_INFO "Radioberry: IRQ Disabled\n");
+			}
+		}
+		else {
+			printk("Radioberry: - Device property 'enable-irq' not found!\n");
+			radioberry_enable_irq = false; 
+			printk(KERN_INFO "Radioberry: IRQ Disabled\n");
+		}
+
 	// Dynamically allocate a major number for the device
 	majorNumber = register_chrdev(0, DEVICE_NAME, &radioberry_fops);
 	if (majorNumber<0){
@@ -320,10 +352,46 @@ static int radioberry_probe(struct platform_device *pdev)
 	if (IS_ERR(radioberryCharDevice)){               
 	  class_destroy(radioberryCharClass);           
 	  unregister_chrdev(majorNumber, DEVICE_NAME);
-	  printk(KERN_ALERT "Failed to create the device\n");
+	  printk(KERN_ALERT "Radioberry: Failed to create the device\n");
 	  return PTR_ERR(radioberryCharDevice);
 	}
 	printk(KERN_INFO "Radioberry char: device class created correctly\n"); 
+
+	if (radioberry_enable_irq) {
+		gpio_desc = gpiod_get(&pdev->dev, "rx-sample", GPIOD_ASIS);
+		if(IS_ERR(gpio_desc)) {
+			printk(KERN_ALERT "Failed to get GPIO rx-sample-gpio\n");
+			return -1 ;//* IS_ERR(gpio_desc);
+		}
+		printk(KERN_INFO "Radioberry: Got GPIO rx-sample-gpio\n");
+		
+		int retval = gpiod_direction_input(gpio_desc);
+		if (retval) {
+			printk("Failed to set GPIO pin direction\n");
+			return retval;
+		}
+		irqNumber = gpiod_to_irq(gpio_desc);
+		if (irqNumber < 0) {
+			printk("Failed to get IRQ number for GPIO pin\n");
+			return irqNumber;
+		}
+		printk(KERN_INFO "Radioberry: The rx samples pin is mapped to IRQ: %d\n", irqNumber);
+
+		init_waitqueue_head(&rx_sample_queue);
+		printk(KERN_INFO "Radioberry: The rx sample state is currently: %d\n", gpiod_get_value(gpio_desc));
+
+		// GPIO numbers and IRQ numbers are not the same! This function performs the mapping for us
+		// Get the IRQ number for the GPIO pin
+		// This next call requests an interrupt line
+		result = request_irq(irqNumber,             
+							(irq_handler_t) radioberry_irq_handler, 
+							IRQF_TRIGGER_RISING,   // Interrupt on rising edge  RQF_TRIGGER_RISING
+							"radioberry_rx_irq",    // Used in /proc/interrupts to identify the owner
+						NULL);
+
+		printk(KERN_INFO "Radioberry: The interrupt request result is: %d\n", result);	
+	}
+
 	mutex_init(&spi_mutex);
 	initialize_rpi();
 	loading_radioberry_gateware(radioberryCharDevice);
@@ -333,7 +401,7 @@ static int radioberry_probe(struct platform_device *pdev)
 
 static int radioberry_remove(struct platform_device *pdev)
 {
-	printk(KERN_INFO "inside %s function \n", __FUNCTION__);
+	printk(KERN_INFO "Radioberry: inside %s function \n", __FUNCTION__);
 	return 0;
 }
 
@@ -355,17 +423,23 @@ static struct platform_driver radioberry_driver = {
 };
 
 static int __init radioberry_init(void) {
-	printk(KERN_INFO "inside %s function \n", __FUNCTION__);
-	printk(KERN_INFO "%s loading...\n", DRIVER_NAME);
+	printk(KERN_INFO "Radioberry: inside %s function \n", __FUNCTION__);
+	printk(KERN_INFO "Radioberry: driver %s loading...\n", DRIVER_NAME);
 
 	int result = platform_driver_register(&radioberry_driver);
-	printk(KERN_INFO "platform driver registered %d \n", result);	
+	printk(KERN_INFO "Radioberry: platform driver registered %d \n", result);	
 	return result;
 }
 
 static void __exit radioberry_exit(void) {
 	
-	printk(KERN_INFO "inside %s function \n", __FUNCTION__);
+	printk(KERN_INFO "Radioberry: inside %s function \n", __FUNCTION__);
+	
+	if (irqNumber > 0)
+		free_irq(irqNumber, NULL);
+    if (gpio_desc != NULL)
+		gpiod_put(gpio_desc);
+
 	platform_driver_unregister(&radioberry_driver);	
 	device_destroy(radioberryCharClass, MKDEV(majorNumber, 0));     
 	class_unregister(radioberryCharClass);                        
