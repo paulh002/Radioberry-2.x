@@ -15,15 +15,16 @@ SoapyRadioberry::SoapyRadioberry( const SoapySDR::Kwargs &args ){
 	SoapySDR_log(SOAPY_SDR_INFO, "SoapyRadioberry::SoapyRadioberry  constructor called");
 	mox = false;
 	no_channels = 1;
+	poweramp_operational = false;
 	fd_rb = open("/dev/radioberry", O_RDWR);
 	try
 	{
 		i2c_ptr = std::make_unique<rpihw::driver::i2c>(rpihw::driver::i2c("/dev/i2c-1"));
 		i2c_available = true;
 	}
-	catch (std::runtime_error e)
+	catch (std::string s)
 	{
-		printf("I2c not found %s", e.what());
+		printf("I2c not found %s", s.c_str());
 		i2c_available = false;
 	}
 }
@@ -210,7 +211,7 @@ std::vector<std::string> SoapyRadioberry::listGains( const int direction, const 
 	SoapySDR_log(SOAPY_SDR_INFO, "SoapyRadioberry::listGains called");
 	
 	std::vector<std::string> options;
-	//options.push_back("PGA"); in pihpsdr no additional gain settings.
+	options.push_back("PGA"); //in pihpsdr no additional gain settings.
 	return(options);
 }
 
@@ -244,12 +245,22 @@ void SoapyRadioberry::setGain( const int direction, const size_t channel, const 
 		if (!mox)
 			return;
 
+		drive = value;
 		uint32_t	z = (uint32_t)value;
 		if (value > 15) z = 15;
 		if (value < 0.0) z = 0;
 		z = z << 28;
 		command = 0x13; 
 		command_data = z;
+		if (poweramp_operational)
+		{
+			command_data |= 0x80000;
+			SoapySDR_log(SOAPY_SDR_INFO, "Enable power amplifier");
+		}
+		else
+		{
+			command_data |= 0x40000;
+		}
 	}
 	
 	this->SoapyRadioberry::controlRadioberry(command, command_data);
@@ -295,9 +306,9 @@ void SoapyRadioberry::writeI2C(const int addr, const std::string &data)
 	{
 		i2c_ptr->write((uint8_t *)data.c_str(), data.size());
 	}
-	catch (std::runtime_error e)
+	catch (std::string s)
 	{
-		printf("%s", e.what());
+		printf("%s", s.c_str());
 	}
 }
 
@@ -316,11 +327,66 @@ std::string SoapyRadioberry::readI2C(const int addr, const size_t numBytes)
 		i2c_ptr->read((uint8_t *)data.c_str(), numBytes);
 		data.resize(numBytes);
 	}
-	catch (std::runtime_error e)
+	catch (std::string s)
 	{
-		printf("%s", e.what());
+		printf("%s", s.c_str());
 	}
 	return data;
 }
+
+SoapySDR::ArgInfoList SoapyRadioberry::getSettingInfo() const
+{
+	SoapySDR::ArgInfoList args;
+	SoapySDR::ArgInfo arg;
+
+	arg.key = "PowerAmp";
+	arg.name = "Power Amplifier";
+	arg.type = SoapySDR::ArgInfo::STRING;
+	arg.options = {"Operate", "Standby"};
+	arg.optionNames = {"Amplifier Status"};
+
+	args.push_back(arg);
+	return args;
+}
+
+SoapySDR::ArgInfoList SoapyRadioberry::getSettingInfo(const int direction, const size_t channel) const
+{
+	SoapySDR::ArgInfoList args;
+	SoapySDR::ArgInfo arg;
+
+	arg.key = "PowerAmp";
+	arg.name = "Power Amplifier";
+	arg.type = SoapySDR::ArgInfo::STRING;
+	arg.options = {"Operate", "Standby"};
+	arg.optionNames = {"Amplifier Status"};
+
+	args.push_back(arg);
+	return args;
+}
+
+void SoapyRadioberry::writeSetting(const std::string &key, const std::string &value)
+{
+	poweramp_operational = false;
+	if (key == "PowerAmp")
+	{
+		if (value == "Operate")
+		{
+			poweramp_operational = true;
+		}
+		setGain(SOAPY_SDR_TX, 0, drive);
+	}
+}
+
+std::string SoapyRadioberry::readSetting(const std::string &key) const
+{
+	if (key == "PowerAmp")
+	{
+		if (poweramp_operational)
+			return "Operate";
+		return "Standby";
+	}
+	return "";
+}
+
 // end of source.
 
